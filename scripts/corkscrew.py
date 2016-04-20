@@ -8,7 +8,7 @@ import os.path
 
 import collections
 
-import corkutils
+from corkutils import toList, roofiter, getNorms, findPdfs, TH1AddDirSentry
 
 #
 # CorkPdf
@@ -92,7 +92,7 @@ class CorkScrew(object):
         ws = wsFile.Get('w')
         self._ws = ws
 
-        data = corkutils.toList(ws.allData())
+        data = toList(ws.allData())
 
         print 'Found',len(data),'datasets'
 
