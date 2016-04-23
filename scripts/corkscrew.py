@@ -1,5 +1,7 @@
 #!/bin/env python
 #
+import argparse
+
 import logging
 
 import ROOT
@@ -87,7 +89,7 @@ class CorkScrew(object):
         wsFile = ROOT.TFile(self._wsFilePath)
 
         if ( not wsFile.IsOpen() ):
-            raise IOError('Failed to open '+self._wsFilePath)
+            raise FileNotFoundError('Failed to open '+self._wsFilePath)
 
         ws = wsFile.Get('w')
         self._ws = ws
@@ -334,9 +336,15 @@ class CorkScrew(object):
 
 if __name__ == '__main__':
 
+    parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter) # Why this formatter? Which other formatters are available ?
+    parser.add_argument('file')
+    args = parser.parse_args()
+    
     logging.basicConfig(level=logging.INFO)
 
-    cs = CorkScrew('model.root')
+
+
+    cs = CorkScrew(args.file)
 
     try:
         cs.createIndexes()
@@ -351,3 +359,5 @@ if __name__ == '__main__':
             cs.analyze('semileptonic',p,'btag', True)
         except RuntimeError as e:
             print e
+
+    
