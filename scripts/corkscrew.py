@@ -300,6 +300,7 @@ class CorkScrew(object):
             
             # Create nominal histogram
             h0 = aPdf.createHistogram(lObsStrList)
+            h0.SetStats(False)
             lScale = aNorm.getVal(lObs)
 
             self._log.info('Norm nominal: %s', lScale)
@@ -307,6 +308,7 @@ class CorkScrew(object):
             h0.Scale(lScale)
 
             h0.SetLineColor(ROOT.kBlack)
+            h0.SetLineWidth(2)
 
             lNuisHist.hNom = h0
 
@@ -315,6 +317,7 @@ class CorkScrew(object):
 
             # Create nominal histogram
             hUp = aPdf.createHistogram(lObsStrList)
+            hUp.SetStats(False)
             lScale = aNorm.getVal(lObs)
             # print 'Norm up:',lScale
             self._log.info('Norm Up: %s', lScale)
@@ -330,6 +333,8 @@ class CorkScrew(object):
             aPar.setVal(-1)
 
             hDwn = aPdf.createHistogram(lObsStrList)
+            hDwn.SetStats(False)
+
             lScale = aNorm.getVal(lObs)
             # print 'Norm down:',lScale
             self._log.info('Norm Down: %s', lScale)
@@ -525,25 +530,13 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
     # logging.basicConfig(level=logging.INFO)
 
-
-
     cs = CorkScrew(args.file)
 
+    cat = 'semileptonic'
+    for proc in cs.cats[cat]:
+        cs.drawVariations(cat,proc,'symjer')
 
-    # try:
-    #     cs.createIndexes()
-    # except RuntimeError as e:
-    #     cs._log.error(e)
-
-    cs.drawVariations('semileptonic','TT','symjer')
     # cs.analyzeProcess('semileptonic','TT','symjes')
-
-    # for p in cs.processes:
-    #     try:
-    #         cs.analyzeProcess('semileptonic',p,'btag', True)
-    #     except RuntimeError as e:
-    #         print e
-    #         
     
     for c in cs.cats:
         cs.analyzeModels(c,'symjer')
