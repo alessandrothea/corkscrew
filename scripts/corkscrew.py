@@ -10,41 +10,48 @@ import os.path
 
 import collections
 
-from corkutils import toList, roofiter, getNorms, findPdfs, TH1AddDirSentry
+from corkutils import toList, roofiter, getNorms, findPdfs, TH1AddDirSentry, plotNuisBand
 
 #
-# CorkPdf
+# CorkShape
 #
-class CorkPdf(object):
-    """docstring for CorkPdf"""
+class CorkShape(object):
+    """docstring for CorkShape"""
     def __init__(self):
-        super(CorkPdf, self).__init__()
+        super(CorkShape, self).__init__()
         self.pdf = None
-        self.bin = None
+        self.cat = None
         self.proc = None
         self.obs = []
         self.pars = []
 
     def __str__(self):
-        return ('%s bin:%s proc:%s obs:%s, pars:%s' % (self.pdf.GetName(),self.bin,self.proc,self.obs,self.pars) )
+        return ('%s cat:%s proc:%s obs:%s, pars:%s' % (self.pdf.GetName(),self.cat,self.proc,self.obs,self.pars) )
 
     __repr__ = __str__
 
-class CorkNorm(object):
-    """docstring for CorkNorm"""
+class CorkNormalization(object):
+    """docstring for CorkNormalization"""
     def __init__(self):
-        super(CorkNorm, self).__init__()
+        super(CorkNormalization, self).__init__()
         self.kind = None
-        self.bin = None
+        self.cat = None
         self.proc = None
         self.norm = None
         self.components = None
         
-        
+ 
+class CorkNuisHist(object):
+    
+    def __init__(self, hNom=None, hUp=None, hDwn=None, kind=None):
+        self.hNom = hNom
+        self.hUp = hUp
+        self.hDwn = hDwn
+        self.kind = kind
+
 #
 # Corkscrew class
 #
-
 class CorkScrew(object):
     """docstring for CorkScrew"""
 
@@ -66,8 +73,8 @@ class CorkScrew(object):
         return self._processes
     
     @property
-    def bins(self):
-        return self._bins
+    def cats(self):
+        return self._cats
     
 
     def __init__(self, wsFilePath):
@@ -78,14 +85,41 @@ class CorkScrew(object):
         # Ensure that combine is loaded
         self._ensureCombine()
 
-        # Ensure ensure that list iterator works
-        # self._ensureListIter()
+        self.createIndexes()
 
 
     def createIndexes(self):
+        '''FIXME: Rewrite it making use of RooSimultaneous catergories
+
+
+        cat = pdfTop.indexCat()
+        idx = cat.getIndex()
+        lAllCats = {}
+        for i in xrange(cat.numBins('')):
+            cat.setBin(i)
+
+            lAllCats[cat.getLabel()] = i
+
+        if aCat not in lAllCats:
+            raise RuntimeError('Category '+aCat+' does not exist. '+', '.join(lAllCats))
+
+        cat.setBin(lAllCats[aCat])
+
+        lCatPdf = pdfTop.getPdf(aCat);
+        lCatPdf.Print()
+
+        lObs = lCatPdf.getObservables(self._data)
+        print lObs
+        lObsStrList = ','.join([ o.GetName() for o in roofiter(lObs) ])
+
+        lScale = lCatPdf.expectedEvents(lObs)
+        print 'Normalization: ', lScale
+
+        h0 = lCatPdf.createHistogram(lObsStrList)
+
+
+        '''
         
-        # import pdb
-        # pdb.set_trace()
         wsFile = ROOT.TFile(self._wsFilePath)
 
         if ( not wsFile.IsOpen() ):
@@ -101,7 +135,7 @@ class CorkScrew(object):
         if len(data) == 0:
             raise RuntimeError('No datasets! What?!?')
         elif len(data) > 2:
-            raise RuntimeError('Too many datasets! Don\;t know what to do')
+            raise RuntimeError('Too many datasets! Don\;t know what to do!')
 
         data_obs = ws.data('data_obs')
         self._data = data_obs
@@ -110,30 +144,28 @@ class CorkScrew(object):
 
         obs = [v.GetName() for v in  roofiter(data_obs.get(0)) ]
 
-        model_s = ws.pdf('model_s')
-        model_b = ws.pdf('model_b')
+        # Get the models
+        self._modelS = ws.pdf('model_s')
+        self._modelB = ws.pdf('model_b')
 
+        # And store the 
+        self._modelSPars = [ p.GetName() for p in roofiter(self._modelS.getParameters(data_obs)) if not p.isConstant() ]
+        self._modelBPars = [ p.GetName() for p in roofiter(self._modelB.getParameters(data_obs)) if not p.isConstant() ]
 
         lProcesses = set()
-        lBins = set()
+        lCats = collections.defaultdict(list)
+        # lProcessByCat = collections.defaultdict(list)
 
-        pdf = model_s
-        pdf_obs  = pdf.getObservables(data_obs)
+        model = self._modelS
+        model_obs  = model.getObservables(data_obs)
 
         # Read 
-        lNorms = getNorms(pdf,pdf_obs)
-        cNorms = collections.OrderedDict()
+        lNorms = getNorms(model,model_obs)
+        lNormIndex = collections.OrderedDict()
 
         for lName,lNorm in lNorms.iteritems():
-            # print name,lCoeff
+            # Tokenize the name
             tk = lName.split(self._sep)
-
-            # print '+++',lName, lNorm.GetName()
-            # print lNorm
-            # lNorm.getComponents().Print()
-
-            # for p in roofiter(lNorm.getComponents()):
-            #     print p, p == lNorm
 
             # Parse name and extract bin + process
             if tk[0:3] != ['n','exp','final']:
@@ -145,33 +177,34 @@ class CorkScrew(object):
             lProcIdx = tk.index('proc')
 
             lProc = self._sep.join(tk[lProcIdx+1:])
-            lBin = self._sep.join(tk[3:lProcIdx])[3:]
+            lCat = self._sep.join(tk[3:lProcIdx])[3:]
 
             lProcesses.add(lProc)
-            lBins.add(lBin)
+            lCats[lCat].append(lProc)
 
-            cNorm = CorkNorm()
-            cNorm.bin = lBin
+            cNorm = CorkNormalization()
+            cNorm.cat = lCat
             cNorm.proc = lProc
             cNorm.norm = lNorm
             # Try with getParameters
             cNorm.components = [c.GetName() for c in roofiter(lNorm.getParameters(self._data)) if c.GetName() != lNorm.GetName()]
 
 
-            # print lBin,'|',lProc,':',lNorm.getVal(pdf_obs),' c:',cNorm.components
-            self._log.debug('%s | %s : %s c: %s',lBin,lProc,lNorm.getVal(pdf_obs),cNorm.components)
+            # print lCat,'|',lProc,':',lNorm.getVal(model_obs),' c:',cNorm.components
+            # self._log.debug('%s | %s : %s c: %s',lCat,lProc,lNorm.getVal(model_obs),cNorm.components)
+            self._log.debug('%s | %s : %s',lCat,lProc,lNorm.getVal(model_obs))
 
-            cNorms[lName] = cNorm
+            lNormIndex[lName] = cNorm
 
         # Norms
-        self._normIdx = cNorms
+        self._normIdx = lNormIndex
         # 
-        self._bins = lBins
+        self._cats = lCats
         self._processes = lProcesses
 
-        lPdfCollection = findPdfs(pdf,pdf_obs)
+        lPdfCollection = findPdfs(model,model_obs)
 
-        cPdfs = collections.OrderedDict()
+        lPdfIndex = collections.OrderedDict()
         
         for lName,lPdf in lPdfCollection.iteritems():
             # print lName, lPdf
@@ -189,58 +222,58 @@ class CorkScrew(object):
             # print lSubName
 
             # Make this a function
-            lBin = None
-            for b in lBins:
-                if not lSubName.startswith(b):
+            lCat = None
+            for c,pros in lCats.iteritems():
+                print [c+self._sep+p for p in pros]
+                # Check if subname is a match t
+                if not lSubName in [c+self._sep+p for p in pros]:
                     continue
-                lBin = b
+                # if not lSubName.startswith(b):
+                #     continue
+                lCat = c
                 break
             
-            if lBin is None:
-                raise RuntimeError('Couldn\'t find bin for lPdf '+lName)
+            if lCat is None:
+                raise RuntimeError('Couldn\'t find category for lPdf '+lName)
             # func end
             
-            lProc = lSubName[len(lBin)+1:]
+            lProc = lSubName[len(lCat)+1:]
             
-            cPdf = CorkPdf()
+            cPdf = CorkShape()
 
             cPdf.kind = tk[0][5:]
             cPdf.pdf = lPdf
-            cPdf.bin = lBin
+            cPdf.cat = lCat
             cPdf.proc = lProc
             cPdf.obs = [obs.GetName() for obs in roofiter(lPdf.getObservables(self._data))]
             cPdf.pars = [par.GetName() for par in roofiter(lPdf.getParameters(self._data))]
 
-            self._log.debug('Name \'%s\'| pdf: %s kind: %s bin: %s proc: %s obs: %s pars: %s',
-                lName, cPdf.pdf, cPdf.kind, cPdf.bin, cPdf.proc, cPdf.obs, cPdf.pars)
-
-            cPdfs[lName] = cPdf
+            # self._log.debug('Name \'%s\'| pdf: %s kind: %s bin: %s proc: %s obs: %s pars: %s',
+            #     lName, cPdf.pdf, cPdf.kind, cPdf.cat, cPdf.proc, cPdf.obs, cPdf.pars)
+            self._log.debug('Name \'%s\'| pdf: %s kind: %s bin: %s proc: %s',
+                lName, cPdf.pdf, cPdf.kind, cPdf.cat, cPdf.proc)
+            lPdfIndex[lName] = cPdf
 
 
 
         # Pdf index
-        self._pdfIdx = cPdfs 
+        self._pdfIdx = lPdfIndex 
 
-    # def run(self):
-        # import pdb
-        # pdb.set_trace()
-        # self.createIndexes()
-
-    def findProcessShape(self, bin, proc):
+    def findProcessShape(self, aCat, aProc):
         res = collections.OrderedDict(
-            [(k,v) for k,v in self._pdfIdx.iteritems() if (v.bin == bin and v.proc == proc)]
+            [(k,v) for k,v in self._pdfIdx.iteritems() if (v.cat == aCat and v.proc == aProc)]
             )
         if not res:
-            raise RuntimeError('No shape found')
+            raise RuntimeError('No shape found for %s:%s' % (aCat,aProc))
         elif len(res) != 1:
             raise RuntimeError('Found multiple shape matching criteria')
 
         return res.popitem()[1]
 
 
-    def findProcessNorm(self, bin, proc):
+    def findProcessNorm(self, aBin, aProc):
         res = collections.OrderedDict(
-            [(k,v) for k,v in self._normIdx.iteritems() if (v.bin == bin and v.proc == proc)]
+            [(k,v) for k,v in self._normIdx.iteritems() if (v.cat == aBin and v.proc == aProc)]
             )
 
         if not res:
@@ -251,13 +284,74 @@ class CorkScrew(object):
         return res.popitem()[1]
 
 
-    def analyze(self, aBin, aProc, aNuisance, aLogY = False ):
+    def plotVariations(self, aPdf, aNorm, aData, aPar):
+
+        par0 = aPar.getVal()
+
+        # Get pdf observables
+        lObs = aPdf.getObservables(aData)
+
+        lNuisHist = CorkNuisHist()
+        lObsStrList = ','.join([ o.GetName() for o in roofiter(lObs) ])
+
+        with TH1AddDirSentry():
+
+            aPar.setVal(0)
+            
+            # Create nominal histogram
+            h0 = aPdf.createHistogram(lObsStrList)
+            lScale = aNorm.getVal(lObs)
+
+            self._log.info('Norm nominal: %s', lScale)
+            # Scale it up
+            h0.Scale(lScale)
+
+            h0.SetLineColor(ROOT.kBlack)
+
+            lNuisHist.hNom = h0
+
+            # Set nuisance to +1 (Up)
+            aPar.setVal(1)
+
+            # Create nominal histogram
+            hUp = aPdf.createHistogram(lObsStrList)
+            lScale = aNorm.getVal(lObs)
+            # print 'Norm up:',lScale
+            self._log.info('Norm Up: %s', lScale)
+
+            # Scale it up
+            hUp.Scale(lScale)
+
+            hUp.SetLineColor(ROOT.kBlue)
+
+            lNuisHist.hUp = hUp
+
+            # Set nuisance to -1 (Down)
+            aPar.setVal(-1)
+
+            hDwn = aPdf.createHistogram(lObsStrList)
+            lScale = aNorm.getVal(lObs)
+            # print 'Norm down:',lScale
+            self._log.info('Norm Down: %s', lScale)
+
+            hDwn.Scale(lScale)
+
+            hDwn.SetLineColor(ROOT.kRed)
+
+            lNuisHist.hDwn = hDwn
+
+        aPar.setVal(par0)
+
+        return lNuisHist
+
+
+    def analyzeProcess(self, aBin, aProc, aNuisance):
 
         # Resolve pdf
         # Throws if not found
         # lPdf = self._pdfIdx.get(pdfName)
 
-        lPdf = self.findProcessShape(aBin, aProc)
+        lShape = self.findProcessShape(aBin, aProc)
 
         lNorm = self.findProcessNorm(aBin, aProc)
 
@@ -268,70 +362,158 @@ class CorkScrew(object):
             raise RuntimeError('Nuisance '+aNuisance+' not found.')
 
         # Ensure that the selected nuisance is a parameter to the PDF
-        if lNuis.GetName() not in lPdf.pars and lNuis.GetName() not in lNorm.components:
+        if lNuis.GetName() not in lShape.pars and lNuis.GetName() not in lNorm.components:
             raise RuntimeError('Nuisance '+aNuisance+' does not influence %s:%s' % (aBin, aProc))
 
         lNuis.Print()
 
-        obs = lPdf.pdf.getObservables(self._data)
+        obs = lShape.pdf.getObservables(self._data)
 
-        print lNorm.norm
+        # print lNorm.norm
 
-        self._log.info('Normalization for %s, %s', lPdf.bin, lPdf.proc)
+        self._log.info('Normalization for %s, %s', lShape.cat, lShape.proc)
+ 
+
+        lNuisHist = self.plotVariations(lShape.pdf, lNorm.norm, self._data, lNuis)
+
+        lNuisHist.kind  = lShape.kind
+
+        return lNuisHist
+
+    # ---
+    def drawVariations(self, aBin, aProc, aNuisance, aLogY = False):
+
+        lNuisHist = self.analyzeProcess(aBin, aProc, aNuisance);
 
         c1 = ROOT.TCanvas()
         c1.SetLogy(aLogY)
 
-        with TH1AddDirSentry():
-            # Create nominal histogram
-            h0 = lPdf.pdf.createHistogram(lPdf.obs[0])
-            lScale = lNorm.norm.getVal(obs)
+        lNuisHist.hNom.SetTitle('%s:%s - %s' % (aBin,aProc,aNuisance))
 
-            print 'Norm nominal:',lScale
-            # Scale it up
-            h0.Scale(lScale)
+        lNuisHist.hNom.Draw()
+        lNuisHist.hUp.Draw('same')
+        lNuisHist.hDwn.Draw('same')
 
-            h0.SetLineColor(ROOT.kBlack)
-            h0.SetTitle('%s:%s - %s' % (aBin,aProc,aNuisance))
-
-            h0.Draw()
-
-            # Set nuisance to +1 (Up)
-            lNuis.setVal(1)
-
-            # Create nominal histogram
-            hUp = lPdf.pdf.createHistogram(lPdf.obs[0])
-            lScale = lNorm.norm.getVal(obs)
-            print 'Norm up:',lScale
-
-            # Scale it up
-            hUp.Scale(lScale)
-
-            hUp.SetLineColor(ROOT.kBlue)
-
-            hUp.Draw('same')
-
-            # Set nuisance to -1 (Down)
-            lNuis.setVal(-1)
-
-            hDwn = lPdf.pdf.createHistogram(lPdf.obs[0])
-            lScale = lNorm.norm.getVal(obs)
-            print 'Norm down:',lScale
-
-            hDwn.Scale(lScale)
-
-            hDwn.SetLineColor(ROOT.kRed)
-
-            hDwn.Draw('same')
 
         lFileName = '%s_%s_%s.pdf' % (aBin, aProc, aNuisance)
+        c1.SaveAs(lFileName)       
+
+    # ---
+    def analyzeModelsB(self, aCat, aNuisance):
+
+        if aNuisance not in self._modelSPars:
+            raise RuntimeError('Nuisance '+aNuisance+' not found.')
+
+        pdfTop = self._modelB
+
+
+        cat = pdfTop.indexCat()
+        idx = cat.getIndex()
+        lAllCats = {}
+        for i in xrange(cat.numBins('')):
+            cat.setBin(i)
+
+            lAllCats[cat.getLabel()] = i
+
+        if aCat not in lAllCats:
+            raise RuntimeError('Category '+aCat+' does not exist. '+', '.join(lAllCats))
+
+        cat.setBin(lAllCats[aCat])
+
+        lCatPdf = pdfTop.getPdf(aCat);
+        lCatPdf.Print()
+
+        lObs = lCatPdf.getObservables(self._data)
+        print lObs
+        lObsStrList = ','.join([ o.GetName() for o in roofiter(lObs) ])
+
+        lScale = lCatPdf.expectedEvents(lObs)
+        print 'Normalization: ', lScale
+
+        h0 = lCatPdf.createHistogram(lObsStrList)
+        h0.Scale(lScale)
+
+        c1 = ROOT.TCanvas()
+
+        h0.Draw()
+        lFileName = 'pippoB.pdf'
+
         c1.SaveAs(lFileName)
 
-        # Scale it down
-        lNuis.setVal(0)
+        cat.setIndex(idx)
+
+    def analyzeModels(self, aCat, aNuisance):
+
+        if aCat not in self.cats:
+            raise RuntimeError('OOoops')
+
+        lAllHists = collections.defaultdict(collections.OrderedDict)
+
+        print self.cats[aCat]
+        for lProcName in self.cats[aCat]:
+            nuis = cs.analyzeProcess(aCat,lProcName,aNuisance)
+
+            lAllHists[nuis.kind][lProcName] = nuis
+
+        with TH1AddDirSentry():
+
+            hBkg = ROOT.THStack('bkg','B only - %s' % aNuisance)
+            hBkgUp = ROOT.THStack('bkgUp','B only - %s up' % aNuisance)
+            hBkgDwn = ROOT.THStack('bkgDwn','B only - %s down' % aNuisance)
+
+            hSigBkg = ROOT.THStack('sig_bkg', 'S+B - %s' % aNuisance)
+            hSigBkgUp = ROOT.THStack('sig_bkgUp', 'S+B - %s up' % aNuisance)
+            hSigBkgDwn = ROOT.THStack('sig_bkgDown', 'S+B - %s down' % aNuisance)
+
+
+            def stackUp( aStack, aHist,aColor=None):
+                hClone = aHist.Clone()
+                if aColor is not None:
+                    hClone.SetLineColor(aColor)
+
+                aStack.Add(hClone)
+
+            for lProcName, lHistNuis in lAllHists['Bkg'].iteritems():
+                # Bkg nominal
+                stackUp(hBkg, lHistNuis.hNom, ROOT.kBlue)
+                stackUp(hBkgUp, lHistNuis.hUp, ROOT.kBlue)
+                stackUp(hBkgDwn, lHistNuis.hDwn, ROOT.kBlue)
+
+
+                stackUp(hSigBkg, lHistNuis.hNom, ROOT.kBlue)
+                stackUp(hSigBkgUp, lHistNuis.hUp, ROOT.kBlue)
+                stackUp(hSigBkgDwn, lHistNuis.hDwn, ROOT.kBlue)
+
+            for lProcName, lHistNuis in lAllHists['Sig'].iteritems():
+                stackUp(hSigBkg, lHistNuis.hNom, ROOT.kRed)
+                stackUp(hSigBkgUp, lHistNuis.hUp, ROOT.kRed)
+                stackUp(hSigBkgDwn, lHistNuis.hDwn, ROOT.kRed)
 
 
 
+            c1 = ROOT.TCanvas()
+
+            lSigBkgSum = hSigBkg.GetStack().Last().Clone()
+
+            lSigBkgSum.Draw()
+            lSigBkgSum.SetTitle('%s:S+B - %s' % (aCat, aNuisance) )
+            lSigBkgVar = plotNuisBand(hSigBkg.GetStack().Last(), hSigBkgUp.GetStack().Last(), hSigBkgDwn.GetStack().Last())
+            lSigBkgVar.SetFillStyle(3004)
+            lSigBkgVar.SetFillColor(ROOT.kRed)
+            lSigBkgVar.SetLineColor(ROOT.kRed)
+            lSigBkgVar.Draw('5 same')
+
+            lBkgSum = hBkg.GetStack().Last().Clone()
+            lBkgSum.SetTitle('%s:B - %s'% (aCat, aNuisance) )
+            lBkgSum.Draw('same')
+            lBkgVar = plotNuisBand(hBkg.GetStack().Last(), hBkgUp.GetStack().Last(), hBkgDwn.GetStack().Last())
+            lBkgVar.SetFillStyle(3005)
+            lBkgVar.SetFillColor(ROOT.kBlue)
+            lBkgVar.SetLineColor(ROOT.kBlue)
+            lBkgVar.Draw('5 same')
+
+            lFileName = '%s_%s.pdf' % (aCat, aNuisance)
+            c1.SaveAs(lFileName)   
 
 
 if __name__ == '__main__':
@@ -340,24 +522,30 @@ if __name__ == '__main__':
     parser.add_argument('file')
     args = parser.parse_args()
     
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(level=logging.DEBUG)
+    # logging.basicConfig(level=logging.INFO)
 
 
 
     cs = CorkScrew(args.file)
 
-    try:
-        cs.createIndexes()
-    except RuntimeError as e:
-        cs._log.error(e)
 
-    cs.analyze('semileptonic','TT','symjer')
-    cs.analyze('semileptonic','TT','symjes')
+    # try:
+    #     cs.createIndexes()
+    # except RuntimeError as e:
+    #     cs._log.error(e)
 
-    for p in cs.processes:
-        try:
-            cs.analyze('semileptonic',p,'btag', True)
-        except RuntimeError as e:
-            print e
+    cs.drawVariations('semileptonic','TT','symjer')
+    # cs.analyzeProcess('semileptonic','TT','symjes')
+
+    # for p in cs.processes:
+    #     try:
+    #         cs.analyzeProcess('semileptonic',p,'btag', True)
+    #     except RuntimeError as e:
+    #         print e
+    #         
+    
+    for c in cs.cats:
+        cs.analyzeModels(c,'symjer')
 
     

@@ -37,6 +37,29 @@ class TH1Sumw2Sentry:
         self.__del__()
 
 
+def plotNuisBand(hNom, hUp, hDwn):
+    '''
+    '''
+    import numpy as np
+    
+    if not all([hNom, hUp, hDwn]):
+        raise RuntimeError('Stica')
+
+    ax      = hNom.GetXaxis()
+    nbins   = ax.GetNbins()
+    xs      = np.array( [ ax.GetBinCenter(i) for i in xrange(1,nbins+1) ], np.float32)
+    wu      = np.array( [ ax.GetBinUpEdge(i)-ax.GetBinCenter(i)  for i in xrange(1,nbins+1) ], np.float32)
+    wd      = np.array( [ ax.GetBinCenter(i)-ax.GetBinLowEdge(i) for i in xrange(1,nbins+1) ], np.float32)
+
+    # Extract arrays ov values and errors
+    nmarray     = np.array( [ hNom.GetBinContent(i) for i in xrange(1,nbins+1) ], np.float32)
+    dwerrs      = np.array( [ hUp.GetBinContent(i)-hNom.GetBinContent(i) for i in xrange(1,nbins+1) ], np.float32)
+    uperrs      = np.array( [ hNom.GetBinContent(i)-hDwn.GetBinContent(i) for i in xrange(1,nbins+1) ], np.float32)
+
+    lErrs = ROOT.TGraphAsymmErrors(len(xs),xs,nmarray,wd,wu,dwerrs,uperrs)   
+
+    return lErrs
+
 def getNorms(pdf, obs, norms = None ):
     '''helper function to exctact the normalisation factors'''
 
